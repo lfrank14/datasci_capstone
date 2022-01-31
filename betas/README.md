@@ -1,0 +1,1 @@
+This folder contains the fMRI data used for the current project. For access to the data, please reach out to l dot frank at uoregon dot edu.

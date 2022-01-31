@@ -2,3 +2,15 @@
 .Rhistory
 .RData
 .Ruserdata
+
+(Zeithamova et al, 2017) Supplemental.docx
+
+(Zeithamova et al. 2017) Trial timing and pattern-information analyses of fMRI data.pdf
+
+doc/*
+
+beh/*
+!beh/README.md
+
+betas/*
+!betas/README.md
