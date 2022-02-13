@@ -9,3 +9,509 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Load Packages
+
+```{r}
+library(tidyverse)
+#library(magrittr)
+#install.packages("e1071")
+#library(e1071)
+#install.packages("caret")
+```
+
+## Set Parameters
+
+```{r}
+# Specify subject ids
+ssids <- seq(1,35)
+ssids <- str_pad(ssids, width = 2, side = "left", pad = "0")
+nsub <- length(ssids)
+
+# Specify trial timing conditions
+conds <- c("quick4n","quick6","slow12")
+nconds <- length(conds)
+
+# Specify regions of interest (ROIs)
+rois <- c("lo")
+# rois <- c("lo","pfus","ipar")
+nrois <- length(rois)
+
+# Specify subsampling ratios
+ratios <- matrix(c(6,3,4,3,2,1,
+                   6,3,6,6,6,6),
+                 nrow = 6, ncol = 2)
+nratios <- nrow(ratios)               
+```
+
+## Create helper functions
+
+Loads and combines behavioral and fMRI data
+
+```{r}
+getData <- function(ssid, cond, roi) {
+  
+  # load behavioral data
+  fname <- sprintf("beh/sub-%s_task-study_items.tsv", ssid)
+  beh <- rio::import(fname) %>% 
+    mutate(design = factor(design, labels = c("med8","quick4n","quick6",
+                                              "slow10","slow12")),
+           category = factor(category, labels = c("animal","tool")))
+  
+  # load betas for each voxel
+  ## exclude first 3 rows, just coordinates of voxel
+  fname <- sprintf("betas/item_betas_sub_%s_%s_b_%s.txt", ssid, cond, roi)
+  betas <- rio::import(fname) %>%
+    slice(-1:-3)
+  
+  # Combine data for classification
+  df <- cbind(beh, betas) %>%
+    filter(design == cond)
+
+  return(df)
+}
+
+# # troubleshoot
+# df <- getData(ssid = "01",
+#               cond = "quick4n",
+#               roi = "lo")
+```
+
+Split the data into folds
++ outputs list with train/test splits
++ each element in list contains 1 train set and 1 test set
+
+```{r}
+cvfold <- function(df, fold_by, dv) {
+  
+  # # make these executable in the code below
+  #fold_by <- eval(substitute(fold_by), df, parent.frame())
+  
+  # number of folds should equal number of levels
+  num_folds <- length(unique(df[,fold_by]))
+  
+  # create train/test set for each fold
+  folds <- list()
+  for (i in c(1:num_folds)) {
+    train <- df %>%
+      filter_at(vars(contains(fold_by)), ~ .x != i) %>% 
+      select(dv, contains("V"))
+    test <- df %>%
+      filter_at(vars(contains(fold_by)), ~ .x == i) %>% 
+      select(dv, contains("V"))
+   folds[[i]] <- list(train = train,
+                      test = test)
+  }
+
+  return(folds)
+}
+
+# # troubleshoot
+# folds <- cvfold(df, fold_by = "run", dv = "category")
+
+```
+
+Subset the data using given ratios
++ iterate over X number of times for more stable estimates
++ will really only work with 2 groups
++ outputs all possible training sets
+
+```{r}
+subSample <- function(train, ratio, times, ngroups = 2) {
+  
+  # get number of observations per class
+  class_size <- nrow(train)/ngroups
+  
+  # if the class sizes are balanced
+  if (ratio[1] == ratio[2]) {
+    
+    # determine size of each class
+    class_size <- ratio[1] * (nrow(train)/ngroups)
+    
+    # downsample each class
+    trainsub <- train %>% 
+      group_by_at(1) %>% 
+      slice_sample(n = class_size) %>% 
+      ungroup()
+    
+    trainsub <- list(trainsub)
+  
+  # if the class sizes are not balanced  
+  } else {
+    
+    # determine size of the smaller class
+    subsize <- ratio[1] * (nrow(train)/ngroups)
+    
+    # downsample the smaller class
+    trainsub <- list()
+    for (i in 1:times) {
+      
+      # split training data
+      trainsplit <- train %>% 
+        group_by_at(1) %>% 
+        group_split()
+      
+      # downsample group 1
+      sampGroup1 <- trainsplit[[1]] %>% 
+        slice_sample(n = subsize) 
+      
+      # downsample group 2
+      sampGroup2 <- trainsplit[[2]] %>% 
+        slice_sample(n = subsize) 
+      
+      trainsub[[i]] <- list(rbind(sampGroup1, trainsplit[[2]]),
+                            rbind(trainsplit[[1]], sampGroup2))
+    }
+    
+    trainsub <- flatten(trainsub)
+  }
+  
+  return(trainsub)
+}
+
+# # troubleshoot
+# trainsets <- subSample(folds[[1]][["train"]], c(.5,1), times = 2)
+
+```
+
+Run univariate feature selection
++ input train set where column 1 = outcome
++ outputs idx for selected voxels
+
+```{r}
+featSelect <- function(train, nfeatures) {
+  
+  train_split <- train %>% 
+    group_by_at(1) %>% 
+    group_split()
+  
+  fvals <- vector()
+  for (fs in 2:ncol(train)) {
+    tmp <- t.test(train_split[[1]][,fs],
+                  train_split[[2]][,fs])
+    fvals[fs-1] <- tmp$statistic[[1]]^2
+  }
+  
+  top_features <- sort(fvals, decreasing = TRUE, index.return = TRUE)
+  idx <- top_features$ix[1:nfeatures] + 1 # need to shift indices up 1 to match columns
+}
+
+
+# # troubleshoot
+# topfeats <- map(trainsets, ~ featSelect(.x, nfeatures = 100))
+
+```
+
+Run SVM classification
+
+```{r}
+runSVM <- function(train, test) {
+  
+  # # troubleshoot
+  # train <- folds[[1]][["train"]]
+  # test <- folds[[1]][["test"]]
+
+  # train model
+  x <- train[,-1]
+  y <- train[,1]
+  train_mdl <- e1071::svm(x, y,
+                          scale = TRUE,
+                          type = "C-classification",
+                          kernel = "linear")
+  
+  # predict test set 
+  pred <- predict(train_mdl, test[,-1], decision.values = FALSE)
+  #decvals <- attr(pred, "decision.values")
+  y <- test[,1]
+  
+  # evaluate performance
+  results <- caret::confusionMatrix(pred, y)
+  
+  test_metrics <- tibble(acc = results$overall[["Accuracy"]],
+                         hit_class1 = results$byClass[["Sensitivity"]],
+                         hit_class2 = results$byClass[["Specificity"]],
+                         fa_class1 = results$table[1,2]/sum(results$table[,2]),
+                         fa_class2 = results$table[2,1]/sum(results$table[,2]))
+  
+  return(test_metrics)
+}
+
+# # troubleshoot 
+# runSVM(train, test)
+```
+
+Putting it all together
+
+```{r}
+
+compSVM <- function(ssid, cond, roi, ratio, fold_by, dv, nsamples, nfeats) {
+  
+  # load data
+  df <- getData(ssid, cond, roi)
+  
+  # create folds for cross-validation
+  folds <- cvfold(df, fold_by, dv) 
+  
+  cv_output <- list()
+  for (i in 1:length(folds)) {
+    
+    # define training and testing sets
+    train <- folds[[i]][["train"]]
+    test <- folds[[i]][["test"]]
+    
+    # subset training set based on ratios
+    trainsets <- subSample(train, ratio, times = nsamples)
+    
+    # feature selection for each training set
+    topfeats <- map(trainsets, ~ featSelect(.x, nfeats))
+    
+    # apply to each training set
+    trainsets_fs <- map2(trainsets, topfeats, ~{
+      .x[,c(1,.y)]
+    }) 
+    
+    # create test sets with top features
+    testsets_fs <- map(topfeats, ~ select(test, c(1, all_of(.x))))
+    
+    # run models
+    cv_output[[i]] <- map2_dfr(trainsets_fs, testsets_fs, ~ runSVM(.x, .y)) %>% 
+      colMeans()
+  }
+  
+  final_output <- bind_rows(cv_output) %>% 
+    colMeans()
+  return(final_output)
+  
+}
+
+
+```
+
+
+```{r}
+
+## REDO SO THAT IT ADDS EVERYTHING TO THE DF AS I GO
+df <- getData(ssid = "01",
+              cond = "quick4n",
+              roi = "lo")
+
+folds <- cvfold(df, 
+                fold_by = "run", 
+                dv = "category")
+
+
+```
+
+
+```{r}
+# specify all model conditions
+allConds <- expand.grid(ssids = ssids,
+                        conds = conds,
+                        rois = rois) %>% 
+  mutate_if(is.factor, as.character)
+
+# run the models with a 1:1 ratio
+tictoc::tic()
+ratio11 <- pmap(allConds, ~{
+    compSVM(ssid = ..1,
+            cond = ..2, 
+            roi = ..3,
+            ratio = c(1,1),
+            fold_by = "run",
+            dv = "category",
+            nsamples = 5,
+            nfeats = 100)})
+tictoc::toc()
+saveRDS(ratio11, "models/ratio11")
+# 393.888s
+
+# run the models with a .5:.5 ratio
+tictoc::tic()
+ratio55 <- pmap(allConds, ~{
+    compSVM(ssid = ..1,
+            cond = ..2, 
+            roi = ..3,
+            ratio = c(.5,.5),
+            fold_by = "run",
+            dv = "category",
+            nsamples = 5,
+            nfeats = 100)})
+tictoc::toc() 
+saveRDS(ratio55, "models/ratio55")
+# 382.836s
+
+# run the models with a 2:3 ratio
+tictoc::tic()
+ratio23 <- pmap(allConds, ~{
+    compSVM(ssid = ..1,
+            cond = ..2, 
+            roi = ..3,
+            ratio = c(2/3,1),
+            fold_by = "run",
+            dv = "category",
+            nsamples = 5,
+            nfeats = 100)})
+tictoc::toc() 
+saveRDS(ratio23, "models/ratio23")
+# 3553.266s
+
+
+# run the models with a 1:2 ratio 
+tictoc::tic()
+ratio12 <- pmap(allConds, ~{
+    compSVM(ssid = ..1,
+            cond = ..2, 
+            roi = ..3,
+            ratio = c(.5,1),
+            fold_by = "run",
+            dv = "category",
+            nsamples = 5,
+            nfeats = 100)})
+tictoc::toc() 
+saveRDS(ratio12, "models/ratio12")
+# 5074.025s
+
+# run the models with a 1:3 ratio
+tictoc::tic()
+ratio13 <- pmap(allConds, ~{
+    compSVM(ssid = ..1,
+            cond = ..2, 
+            roi = ..3,
+            ratio = c(1/3,1),
+            fold_by = "run",
+            dv = "category",
+            nsamples = 5,
+            nfeats = 100)})
+tictoc::toc() 
+saveRDS(ratio13, "models/ratio13")
+# 4966.949s
+```
+
+
+Run SVM classification
+
+```{r}
+cv <- seq(1,2)
+nAnimals <- 6
+nTools <- 6
+  
+train_mdls <- list()
+test_mdls <- list()
+test_metrics <- list()
+
+for (i in cv) {
+  
+  # train model
+  mdl <- e1071::svm(category ~ .,
+             data = train,
+             scale = TRUE,
+             type = "C-classification",
+             kernel = "linear") 
+  train_mdls[[i]] <- list(mdl,
+                          mean(mdl$fitted == train$category),
+                          mdl$decision.values)
+  
+  # predict test set
+  (pred <- predict(mdl, test[,-1], decision.values = TRUE))
+  test_mdls[[i]] <- pred
+  
+  #table(pred, y)
+  #caret::confusionMatrix(pred, y)
+  
+  y <- test[,1]
+  decvals <- attr(pred, "decision.values")
+  test_metrics[[i]] <- data.frame(ssid = test_ssid,
+                             acc = mean(pred == y),
+                             hit_animal = sum(pred=="animal" & y=="animal")/nAnimals,
+                             hit_tools = sum(pred=="tool" & y=="tool")/nTools,
+                             fa_animal = sum(pred=="animal" & y=="tool")/nTools,
+                             fa_tool = sum(pred=="tool" & y=="animal")/nAnimals,
+                             absdcv_animal = abs(mean(decvals[y=="animal"])),
+                             absdcv_tool = abs(mean(decvals[y=="tool"])))
+}
+
+```
+
+
+Caret package
+*cannot get feature selection to work*
+
+```{r}
+# specify all conditions for data files
+alldataconds <- expand.grid(ssid = ssids,
+                        conds = conds,
+                        rois = rois) %>% 
+  mutate(rois = as.character(rois),
+         conds = as.character(conds))
+
+```
+
+
+```{r}
+library(caret)
+
+# troubleshoot
+df <- getData(ssid = "01",
+              cond = "quick4n",
+              roi = "lo") %>% 
+  select(category, contains("V"))
+
+# write function to subset data 
+
+
+# setup cross-validation folds
+cvfolds <- caret::trainControl(
+  method = "cv",
+  number = 2,
+  index = list(c(1:12),
+               c(13:24)),
+  savePredictions = TRUE
+)
+
+# run subsampling
+
+
+# # run feature selection - DOES NOT WORK
+# featselect <- sbf(
+#   formula = category ~ .,
+#   data = df,
+#   method = "svmLinear",
+#   preProcess = c("center","scale"),
+#   sbfControl = sbfControl(
+#     functions = caretSBF,
+#     method = "cv",
+#     number = 2,
+#     index = list(c(1:12),
+#                c(13:24)),
+#     saveDetails = TRUE)
+# )
+
+catDecode <- caret::train(category ~ ., 
+                   data = df_clean,
+                   method = "svmLinear",
+                   trControl = cvfolds,
+                   preProcess = c("center","scale"))
+
+catDecode$results
+catDecode$pred
+```
+
+
+Lets try with tidy models
+Probably won't use bc it's not as flexible
+All I really need is a way to cross validate using the runs as a fold
+
+```{r}
+library(tidymodels)
+
+df_clean <- df %>% 
+  select(category, run, contains("V"))
+
+# Build model
+svm_decode <- svm_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("LiblineaR")
+
+# Create recipe
+cat_rec <- recipe(category ~ ., data = df)
+```
+
