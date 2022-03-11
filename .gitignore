@@ -16,9 +16,7 @@ betas/*
 !betas/README.md
 
 models/decodeCat.rds
-#models/decodeCat_results.rds
 models/decodeMem.rds
-models/decodeMem_results.rds
 
 models/decodeWCat.rds
 models/decodeWCat_results.rds
