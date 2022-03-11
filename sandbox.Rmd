@@ -94,10 +94,10 @@ cvfold <- function(df, fold_by, dv) {
   for (i in c(1:num_folds)) {
     train <- df %>%
       filter_at(vars(contains(fold_by)), ~ .x != i) %>% 
-      select(dv, contains("V"))
+      select(all_of(dv), contains("V"))
     test <- df %>%
       filter_at(vars(contains(fold_by)), ~ .x == i) %>% 
-      select(dv, contains("V"))
+      select(all_of(dv), contains("V"))
    folds[[i]] <- list(train = train,
                       test = test)
   }
@@ -105,8 +105,8 @@ cvfold <- function(df, fold_by, dv) {
   return(folds)
 }
 
-# # troubleshoot
-# folds <- cvfold(df, fold_by = "run", dv = "category")
+# troubleshoot
+folds <- cvfold(df, fold_by = "run", dv = "category")
 
 ```
 
@@ -118,16 +118,13 @@ Subset the data using given ratios
 ```{r}
 subSample <- function(train, ratio, times, ngroups = 2) {
   
-  # get number of observations per class
-  class_size <- nrow(train)/ngroups
-  
   # if the class sizes are balanced
   if (ratio[1] == ratio[2]) {
     
     # determine size of each class
     class_size <- ratio[1] * (nrow(train)/ngroups)
     
-    # downsample each class
+    # sample from each class
     trainsub <- train %>% 
       group_by_at(1) %>% 
       slice_sample(n = class_size) %>% 
@@ -141,7 +138,7 @@ subSample <- function(train, ratio, times, ngroups = 2) {
     # determine size of the smaller class
     subsize <- ratio[1] * (nrow(train)/ngroups)
     
-    # downsample the smaller class
+    # randomly sample to create smaller classes
     trainsub <- list()
     for (i in 1:times) {
       
@@ -150,11 +147,11 @@ subSample <- function(train, ratio, times, ngroups = 2) {
         group_by_at(1) %>% 
         group_split()
       
-      # downsample group 1
+      # sample group 1
       sampGroup1 <- trainsplit[[1]] %>% 
         slice_sample(n = subsize) 
       
-      # downsample group 2
+      # sample group 2
       sampGroup2 <- trainsplit[[2]] %>% 
         slice_sample(n = subsize) 
       
@@ -207,8 +204,8 @@ Run SVM classification
 runSVM <- function(train, test) {
   
   # # troubleshoot
-  # train <- folds[[1]][["train"]]
-  # test <- folds[[1]][["test"]]
+  # train <- trainsets_fs[[1]]
+  # test <- testsets_fs[[1]]
 
   # train model
   x <- train[,-1]
@@ -217,6 +214,16 @@ runSVM <- function(train, test) {
                           scale = TRUE,
                           type = "C-classification",
                           kernel = "linear")
+  
+  # identify which class was smaller
+  classCounts <- y %>% 
+    group_by_at(1) %>% 
+    count()
+  
+  subClass <- ifelse(classCounts$n[1]==classCounts$n[2],
+                     "none",
+                     ifelse(classCounts$n[1]<classCounts$n[2],
+                            "class1", "class2"))
   
   # predict test set 
   pred <- predict(train_mdl, test[,-1], decision.values = FALSE)
@@ -230,7 +237,8 @@ runSVM <- function(train, test) {
                          hit_class1 = results$byClass[["Sensitivity"]],
                          hit_class2 = results$byClass[["Specificity"]],
                          fa_class1 = results$table[1,2]/sum(results$table[,2]),
-                         fa_class2 = results$table[2,1]/sum(results$table[,2]))
+                         fa_class2 = results$table[2,1]/sum(results$table[,2]),
+                         subClass = subClass)
   
   return(test_metrics)
 }
@@ -274,29 +282,17 @@ compSVM <- function(ssid, cond, roi, ratio, fold_by, dv, nsamples, nfeats) {
     
     # run models
     cv_output[[i]] <- map2_dfr(trainsets_fs, testsets_fs, ~ runSVM(.x, .y)) %>% 
-      colMeans()
+      group_by(subClass) %>% 
+      summarize(across(everything(), mean))
   }
   
   final_output <- bind_rows(cv_output) %>% 
-    colMeans()
+    group_by(subClass) %>% 
+    summarize(across(everything(), mean))
+  
   return(final_output)
   
 }
-
-
-```
-
-
-```{r}
-
-## REDO SO THAT IT ADDS EVERYTHING TO THE DF AS I GO
-df <- getData(ssid = "01",
-              cond = "quick4n",
-              roi = "lo")
-
-folds <- cvfold(df, 
-                fold_by = "run", 
-                dv = "category")
 
 
 ```
