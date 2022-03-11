@@ -4,7 +4,7 @@ output:
   flexdashboard::flex_dashboard:
     orientation: rows
     vertical_layout: fill
-    source_code: embed
+    source_code: https://github.com/lfrank14/datasci_capstone
     theme:
       version: 4
       bootswatch: "yeti"
@@ -119,7 +119,7 @@ cat_resp_avg <- cat_resp %>%
             .groups = "keep")
 ```
 
-In the present report, I tested the effect of unequal or unbalanced classes on MVPA performance. For the first classification problem, a support vector machine (SVM) model was trained to differentiate between patterns of brain activity when a participant is viewing an animal v. tool. For more information about the SVM models, please see the `About` page. Class sizes in the training data were manually adjusted to the following ratios - 2:3, 1:2, 1:3. These were compared to two balanced conditions- 1:1 and .5:.5. The 1:1 condition contained all observations for both classes. The .5:.5 condition was included to compare the effect of downsampling to balance the class sizes with fewer observations. 
+In the present report, I tested the effect of unequal or unbalanced classes on MVPA performance. For the first classification problem, a support vector machine (SVM) model was trained to differentiate between patterns of brain activity when a participant is viewing an animal v. tool. For more information about the SVM models, please see the [About](#about) page. Class sizes in the training data were manually adjusted to the following ratios - 2:3, 1:2, 1:3. These were compared to two balanced conditions- 1:1 and .5:.5. The 1:1 condition contained all observations for both classes. The .5:.5 condition was included to compare the effect of downsampling to balance the class sizes with fewer observations. 
 
 ### Classification accuracy decreases as classes become more unbalanced
 
@@ -278,7 +278,7 @@ I then broke down the false alarm rate when each category served as the smaller 
 Decoding Memory {.storyboard}
 =======================================================================
 
-For the second classification problem, a support vector machine (SVM) model was trained to differentiate between patterns of brain activity associated with remembered v. forgotten trials. For more information about the SVM models, please see the `About` page. As people retain information at different rates, this allowed me to probe the effect of unequal class sizes in a real-world example. 
+For the second classification problem, a support vector machine (SVM) model was trained to differentiate between patterns of brain activity associated with remembered v. forgotten trials. For more information about the SVM models, please see the [About](#about) page. As people retain information at different rates, this allowed me to probe the effect of unequal class sizes in a real-world example. 
 
 ```{r}
 # calculate a corrected hit rate
