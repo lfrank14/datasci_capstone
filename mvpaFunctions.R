@@ -42,8 +42,8 @@ cvfold <- function(df, fold_by, dv) {
   num_folds <- length(unique(df[,fold_by]))
   
   # create train/test set for each fold
-  folds <- list()
-  for (i in c(1:num_folds)) {
+  folds <- vector("list", length = num_folds)
+  for (i in seq_len(num_folds)) {
     train <- df %>%
       filter_at(vars(contains(fold_by)), ~ .x != i) %>% 
       select(all_of(dv), contains("V"))
@@ -113,7 +113,7 @@ subSample <- function(train, ratio, times, ngroups = 2) {
     trainsub <- flatten(trainsub)
   }
   
-  return(trainsub)
+  trainsub
 }
 
 #===================================================================================#

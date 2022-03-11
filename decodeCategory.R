@@ -50,6 +50,13 @@ conds <- conds %>%
                              fold_by = "run",
                              dv = "category")))
 
+# DA: I'm pretty sure the above two could be collapsed to one call like this:
+# conds <- conds %>% 
+#   rowwise() %>% 
+#   mutate(df = list(getData(ssid, timing, roi)),
+#          folds = list(cvfold(df,
+#                              fold_by = "run",
+#                              dv = "category")))
 
 ## Run Cross Validation ##
 tictoc::tic()
