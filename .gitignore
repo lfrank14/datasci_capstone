@@ -15,4 +15,15 @@ beh/*
 betas/*
 !betas/README.md
 
-models/*
+models/decodeCat.rds
+#models/decodeCat_results.rds
+models/decodeMem.rds
+models/decodeMem_results.rds
+
+models/decodeWCat.rds
+models/decodeWCat_results.rds
+models/decodeWMem.rds
+models/decodeWMem_results.rds
+
+decodeCategory_weighted.R
+decodeMemory_weighted.R
